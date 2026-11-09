@@ -1,0 +1,40 @@
+name: Complete StrobiSoft HTTPS
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+jobs:
+  enable-https:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check domain and enforce HTTPS when certificate is ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          pages="$(gh api "repos/$repo/pages")"
+          cname="$(jq -r '.cname // ""' <<< "$pages")"
+          if [[ "$cname" != "strobisoft.com" ]]; then
+            echo "::error::Pages domain mismatch ($cname); leaving configuration unchanged."
+            exit 1
+          fi
+          if [[ "$(jq -r '.https_enforced // false' <<< "$pages")" == "true" ]]; then
+            echo "HTTPS already enforced."
+            exit 0
+          fi
+          for url in https://strobisoft.com/ https://strobisoft.com/node-ijet/ https://www.strobisoft.com/; do
+            if ! curl -fsSL --max-time 15 -o /dev/null "$url"; then
+              echo "Certificate or HTTPS route for $url is not ready yet; try next schedule."
+              exit 0
+            fi
+          done
+          echo "All TLS certificate checks passed; enabling HTTPS enforcement."
+          gh api --method PUT "repos/$repo/pages" -F https_enforced=true
+          updated="$(gh api "repos/$repo/pages")"
+          test "$(jq -r '.https_enforced' <<< "$updated")" = "true"
+          echo "HTTPS enforcement confirmed in GitHub Pages."
